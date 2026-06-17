@@ -133,6 +133,7 @@ namespace tfm400_pc
       cp = new ComPortNative(this);
       isdbg = false;
       UpdateRssiLogMenuState();
+      BuildChartTab();
     }
 
     //
@@ -567,6 +568,7 @@ namespace tfm400_pc
         labelFWsize.Text = "-----";
       }
       WriteRssiLogRow(rssi, ber, hwec, Ttx, Trx, rfstat, rfstatText);
+      PushTelemetry(rssi, ber, Ttx, Trx, rfstat);
     }
 
     private void devDisc()
@@ -583,6 +585,7 @@ namespace tfm400_pc
       toolStripStatusLabelStatus.Text = "Нет связи с РС";
       toolStripStatusLabelRSSI.Text = "RSSI";
       toolStripStatusLabelTemp.Text = "Temp";
+      ResetChart();
     }
 
     public void dbg(string s)
