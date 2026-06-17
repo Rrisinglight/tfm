@@ -1,0 +1,14 @@
+# Build outputs
+bin/
+obj/
+
+# Visual Studio local files
+.vs/
+*.user
+*.suo
+*.cache
+
+# OS/editor noise
+Thumbs.db
+Desktop.ini
+.DS_Store
