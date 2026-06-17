@@ -237,27 +237,27 @@ namespace tfm400_pc
 
     private void fileRead()
     {
-      FileStream s;
       try
       {
-        s = File.OpenRead(textBoxFWfile.Text);
-        if (s.Length < 32 || s.Length > PROG_MAX_SIZE)
+        using (FileStream s = File.OpenRead(textBoxFWfile.Text))
         {
-          statusMsg("ОШИБКА: файл поврежден", Color.Black);
-          return;
+          if (s.Length < 32 || s.Length > PROG_MAX_SIZE)
+          {
+            statusMsg("ОШИБКА: файл поврежден", Color.Black);
+            return;
+          }
+          prog_ptr = 32;
+          prog_size = (int)s.Length;
+          s.Read(prog_data, 0, (int)s.Length);
+          bool res = comBootHdrWr();
+          if (res)
+          {
+            statusMsg("Обновление ПО... 0 %", Color.Black);
+          } else
+          {
+            statusMsg("ОШИБКА: запись в устройство", Color.Black);
+          }
         }
-        prog_ptr = 32;
-        prog_size = (int)s.Length;
-        s.Read(prog_data, 0, (int)s.Length);
-        bool res = comBootHdrWr();
-        if (res)
-        {
-          statusMsg("Обновление ПО... 0 %", Color.Black);
-        } else
-        {
-          statusMsg("ОШИБКА: запись в устройство", Color.Black);
-        }
-        s.Close();
       }
       catch (Exception)
       {
@@ -437,6 +437,7 @@ namespace tfm400_pc
 
     private void infoSet(byte[] data, int size)
     {
+      if (data == null || size < 20) return;
       UInt16 pid = getUInt16(data, 18);
       if (pid == 0) dev_name = "TFM400BFI";
       else dev_name = "Неизвестно";
@@ -576,6 +577,7 @@ namespace tfm400_pc
 
     private void statSet(byte[] data, int size)
     {
+      if (data == null || size < 14) return;
       Int16 rssi = (Int16)getUInt16(data, 0);
       toolStripStatusLabelRSSI.Text = "RSSI= " + rssi.ToString();
       decimal ber = (decimal)getUInt16(data, 2) / 256;
@@ -1020,6 +1022,12 @@ namespace tfm400_pc
       else if (type == CMD_UPAR_WR)
       {
         cpTimerStop();
+        if (size < 1 || data == null)
+        {
+          statusMsgAppend("ОШИБКА (короткий ответ)");
+          cop = CMD_NOP;
+          return;
+        }
         int err = data[0];
         if (err == 0)
         {
@@ -1049,6 +1057,12 @@ namespace tfm400_pc
       else if (type == CMD_FPAR_WR)
       {
         cpTimerStop();
+        if (size < 1 || data == null)
+        {
+          statusMsgAppend("ОШИБКА (короткий ответ)");
+          cop = CMD_NOP;
+          return;
+        }
         int err = data[0];
         if (err == 0)
         {
@@ -1084,8 +1098,14 @@ namespace tfm400_pc
       }
       else if (type == CMD_PTT)
       {
-        int err = data[0];
         cpTimerStop();
+        if (size < 1 || data == null)
+        {
+          statusMsg(statMsgTxt + "ОШИБКА (короткий ответ)", Color.Black);
+          cop = CMD_NOP;
+          return;
+        }
+        int err = data[0];
         if (err == 0)
         {
           statusMsg(statMsgTxt + "OK", Color.Black);
@@ -1098,13 +1118,18 @@ namespace tfm400_pc
       }
       else if (type == CMD_SEND_DATA)
       {
-        int err = data[0];
         cpTimerStop();
+        if (size < 1 || data == null)
+        {
+          statusMsg(statMsgTxt + "ОШИБКА (короткий ответ)", Color.Black);
+          cop = CMD_NOP;
+          return;
+        }
+        int err = data[0];
         if (err == 0)
         {
           statusMsg(statMsgTxt + "OK", Color.Black);
-          err = data[1];
-          if (err == 0)
+          if (size >= 2 && data[1] == 0)
           {
             textBoxChat.AppendText("TX: " + sentMsg);
             textBoxMsg.Text = "";
@@ -1124,9 +1149,14 @@ namespace tfm400_pc
       }
       else if (type == CMD_BOOT_HDR)
       {
-        int err = data[0];
         cpTimerStop();
         cop = CMD_NOP;
+        if (size < 1 || data == null)
+        {
+          statusMsg("Обновление ПО... ОШИБКА (короткий ответ)", Color.Black);
+          return;
+        }
+        int err = data[0];
         if (err == 0)
         {
           bool res = comBootBlkWr();
@@ -1142,9 +1172,14 @@ namespace tfm400_pc
       }
       else if (type == CMD_BOOT_BLK)
       {
-        int err = data[0];
         cpTimerStop();
         cop = CMD_NOP;
+        if (size < 1 || data == null)
+        {
+          statusMsg("Обновление ПО... ОШИБКА (короткий ответ)", Color.Black);
+          return;
+        }
+        int err = data[0];
         if (err == 0)
         {
           prog_ptr += prog_sent;
@@ -1176,7 +1211,7 @@ namespace tfm400_pc
       }
       else if (type == CMD_INFO)
       {
-        if (size > 0)
+        if (size >= 20)
         {
           infoSet(data, size);
           rspTimerStart(3000);
@@ -1184,7 +1219,7 @@ namespace tfm400_pc
       }
       else if (type == CMD_STAT)
       {
-        if (size > 0)
+        if (size >= 14)
         {
           statSet(data, size);
           rspTimerStart(3000); // restart
@@ -1439,8 +1474,10 @@ namespace tfm400_pc
 
     public void startPortThread()
     {
+      if (oThread != null && oThread.IsAlive) return;
       running = true;
       oThread = new Thread(new ThreadStart(Run));
+      oThread.IsBackground = true;
       oThread.Start();
       while (!oThread.IsAlive) ;
     }
@@ -1448,7 +1485,13 @@ namespace tfm400_pc
     public void stopPortThread()
     {
       running = false;
-      //oThread.Join();
+      if (oThread != null && oThread.IsAlive && Thread.CurrentThread != oThread)
+      {
+        if (!oThread.Join(1000))
+          par.dbg("COM thread did not stop in time" + Environment.NewLine);
+      }
+      if (oThread != null && !oThread.IsAlive)
+        oThread = null;
     }
 
     public void comClose()
@@ -1648,7 +1691,7 @@ namespace tfm400_pc
             {
               opb = null;
             }
-            par.BeginInvoke(par.comRxImpl, new Object[] { type, opb, opbs });
+            postComRx(type, opb, opbs);
             rx_state = (byte)rx_s.BCSP_W4_PKT_DELIMITER;
             continue;
           case (byte)rx_s.BCSP_W4_PKT_DELIMITER:
@@ -1679,6 +1722,30 @@ namespace tfm400_pc
       }
     }
 
+    private void postComRx(int type, byte[] data, int size)
+    {
+      if (par == null || par.IsDisposed || !par.IsHandleCreated) return;
+      try
+      {
+        par.BeginInvoke(par.comRxImpl, new Object[] { type, data, size });
+      }
+      catch (InvalidOperationException)
+      {
+      }
+    }
+
+    private void postComCon(string pn)
+    {
+      if (par == null || par.IsDisposed || !par.IsHandleCreated) return;
+      try
+      {
+        par.BeginInvoke(par.comConImpl, new Object[] { pn });
+      }
+      catch (InvalidOperationException)
+      {
+      }
+    }
+
     public void Run()
     {
       bool res;
@@ -1700,7 +1767,7 @@ namespace tfm400_pc
           {
             portPurge();
             portCloseNative();
-            par.BeginInvoke(par.comConImpl, new Object[] { null });
+            postComCon(null);
             par.dbg("COM lost and closed" + Environment.NewLine);
             state = 0;
           }
@@ -1719,7 +1786,7 @@ namespace tfm400_pc
             if (res)
             {
               PurgeComm(fHandle, 0x000C); // RXCLR & TXCLR
-              par.BeginInvoke(par.comConImpl, new Object[] { pn });
+              postComCon(pn);
               state++;
             }
           }
@@ -1864,7 +1931,7 @@ namespace tfm400_pc
 
     private bool portIsOpenNative()
     {
-      if (fHandle == null)
+      if (fHandle == null || fHandle.IsClosed || fHandle.IsInvalid)
         return false;
       else
         return true;
@@ -1934,7 +2001,7 @@ namespace tfm400_pc
     private void portCloseNative()
     {
       if (fHandle == null) return;
-      CloseHandle(fHandle);
+      fHandle.Close();
       fHandle = null;
     }
 

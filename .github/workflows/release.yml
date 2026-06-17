@@ -1,0 +1,52 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release
+        run: msbuild .\tfm400_pc.sln /p:Configuration=Release /p:Platform="Any CPU"
+
+      - name: Package executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .\release | Out-Null
+          Copy-Item .\tfm400_pc\bin\Release\tfm400_pc.exe .\release\
+          Copy-Item .\tfm400_pc\bin\Release\tfm400_pc.exe.config .\release\
+          Compress-Archive -Path .\release\* -DestinationPath .\release\tfm400_pc-windows.zip -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfm400_pc-windows
+          path: |
+            release/tfm400_pc.exe
+            release/tfm400_pc.exe.config
+            release/tfm400_pc-windows.zip
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/tfm400_pc.exe
+            release/tfm400_pc.exe.config
+            release/tfm400_pc-windows.zip
