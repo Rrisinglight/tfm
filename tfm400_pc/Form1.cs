@@ -22,14 +22,14 @@ namespace tfm400_pc
   public partial class Form1 : Form
   {
     // CONST
-    public int KEY_NUM = 63;
-    public int KEY_LEN = 32;
-    public int KEY_STR_LEN = 64;
-    public int UPAR_SIZE = 16;
-    public int FPAR_SIZE = 256;
-    public int PAGE_SIZE = 2048;
-    public int PROG_MAX_SIZE = 200*1024;
-    public int CHAN_SPACING = 12500;
+    private const int KEY_NUM = 63;
+    private const int KEY_LEN = 32;
+    private const int KEY_STR_LEN = 64;
+    private const int UPAR_SIZE = 16;
+    private const int FPAR_SIZE = 256;
+    private const int PAGE_SIZE = 2048;
+    private const int PROG_MAX_SIZE = 200 * 1024;
+    private const int CHAN_SPACING = 12500;
     private const byte CMD_NOP = 0xFF;
     private const byte CMD_INFO = 1;
     private const byte CMD_STAT = 2;
@@ -38,7 +38,6 @@ namespace tfm400_pc
     private const byte CMD_KEYS_WR = 5;
     private const byte CMD_SEND_DATA = 6;
     private const byte CMD_RECV_DATA = 7;
-    private const byte CMD_PURGE_DATA = 8;
     private const byte CMD_PTT = 50;
     private const byte CMD_FPAR_RD = 51;
     private const byte CMD_FPAR_WR = 52;
@@ -46,8 +45,6 @@ namespace tfm400_pc
     private const byte CMD_BOOT_BLK = 54;
     private const byte CMD_BOOT_INFO = 55;
     private const int TMO_CMD = 2000;
-    private const int TMO_PDU = 5000;
-    private const int TMO_ACK = 1000;
     private const string org_name = "TFM400 ТЮНЕР";
     private const int VER_MAJOR = 1;
     private const int VER_MINOR = 2;
@@ -55,8 +52,6 @@ namespace tfm400_pc
 
     // VAR
     private Random rand;
-    private bool init_done;
-    private bool par_changed;
     private byte[] par1, par2;
     private byte[] prog_data;
     private byte[] page_data;
@@ -84,6 +79,24 @@ namespace tfm400_pc
     private string rssiLogPath;
     private bool rssiLogActive;
 
+    private class PttBand
+    {
+      public CheckBox CheckBox;
+      public Int32 Frequency;
+      public NumericUpDown HighPower;
+      public NumericUpDown MediumPower;
+      public NumericUpDown LowPower;
+
+      public PttBand(CheckBox checkBox, Int32 frequency, NumericUpDown highPower, NumericUpDown mediumPower, NumericUpDown lowPower)
+      {
+        CheckBox = checkBox;
+        Frequency = frequency;
+        HighPower = highPower;
+        MediumPower = mediumPower;
+        LowPower = lowPower;
+      }
+    }
+
     public Form1()
     {
       InitializeComponent();
@@ -92,6 +105,7 @@ namespace tfm400_pc
       ver_str = "v" + VER_MAJOR.ToString() + "." + VER_MINOR.ToString();
       this.Text = org_name;
       dev_name = "Неизвестно";
+      rand = new Random();
       par1 = new byte[UPAR_SIZE];
       par2 = new byte[UPAR_SIZE];
       prog_data = new byte[PROG_MAX_SIZE];
@@ -102,7 +116,6 @@ namespace tfm400_pc
       comboBoxPwrSel.SelectedIndex = 0;
       comboBoxTxPwr.SelectedIndex = 0;
       tabControl.TabPages.Remove(tabPageKeys);
-      //tabControl.TabPages.Remove(tabPageParFact);
       // Timers
       cpTimer = new System.Timers.Timer();
       cpTimer.Elapsed += new ElapsedEventHandler(cpTimer_Elapsed);
@@ -163,37 +176,23 @@ namespace tfm400_pc
       toolStripStatusLabelStatus.Text += txt;
     }
 
-    public bool memcmp(byte[] a, int ia, byte[] b, int ib, int size)
-    {
-      for (int i = 0; i < size; i++)
-      {
-        if (a[ia + i] != b[ib + i]) return true;
-      }
-      return false;
-    }
-
-    public void memset(byte[] adr, int idx, byte f, int size)
-    {
-      for (int i = 0; i < size; i++) adr[idx + i] = f;
-    }
-
-    public void memcpy(byte[] dst, int didx, byte[] src, int sidx, int size)
+    public void CopyBytes(byte[] dst, int didx, byte[] src, int sidx, int size)
     {
       for (int i = 0; i < size; i++) dst[didx + i] = src[sidx + i];
     }
 
-    public void setUInt16(byte[] buf, int idx, UInt16 v)
+    public void setUInt16LE(byte[] buf, int idx, UInt16 v)
     {
       buf[idx + 0] = (byte)(v >> 0);
       buf[idx + 1] = (byte)(v >> 8);
     }
 
-    public UInt16 getUInt16(byte[] buf, int idx)
+    public UInt16 getUInt16LE(byte[] buf, int idx)
     {
       return (UInt16)(buf[idx] | buf[idx + 1] << 8);
     }
 
-    public void setUInt32(byte[] buf, int idx, UInt32 v)
+    public void setUInt32LE(byte[] buf, int idx, UInt32 v)
     {
       buf[idx + 0] = (byte)(v >> 0);
       buf[idx + 1] = (byte)(v >> 8);
@@ -201,18 +200,9 @@ namespace tfm400_pc
       buf[idx + 3] = (byte)(v >> 24);
     }
 
-    public UInt32 getUInt32(byte[] buf, int idx)
+    public UInt32 getUInt32LE(byte[] buf, int idx)
     {
       return buf[idx] | (UInt32)buf[idx + 1] << 8 | (UInt32)buf[idx + 2] << 16 | (UInt32)buf[idx + 3] << 24;
-    }
-
-    private void hex2byte(string str, byte[] op, int ofs, int n)
-    {
-      for (int i = 0; i < n; i++)
-      {
-        string ss = str.Substring(2 * i, 2);
-        op[i + ofs] = byte.Parse(ss, System.Globalization.NumberStyles.HexNumber);
-      }
     }
 
     private string keyGenerate()
@@ -221,7 +211,7 @@ namespace tfm400_pc
       string key_str = "";
       for (int i = 0; i < 64; i++)
       {
-        int letter_num = rand.Next(0, letters.Length - 1);
+        int letter_num = rand.Next(0, letters.Length);
         key_str += letters[letter_num];
       }
       return key_str;
@@ -267,13 +257,13 @@ namespace tfm400_pc
 
     private void setUserPar(byte[] ip)
     {
-      UInt32 id = getUInt32(ip, 0);
+      UInt32 id = getUInt32LE(ip, 0);
       numericUpDownID.Value = id;
-      decimal freq = getUInt32(ip, 4);
+      decimal freq = getUInt32LE(ip, 4);
       numericUpDownBaseFreq.Value = freq / 1000000;
-      UInt32 bw = getUInt16(ip, 8);
+      UInt32 bw = getUInt16LE(ip, 8);
       numericUpDownBW.Value = bw;
-      UInt16 flags = getUInt16(ip, 10);
+      UInt16 flags = getUInt16LE(ip, 10);
       comboBoxBERtst.SelectedIndex = (flags >> 2) & 1;
       comboBoxLostPkt.SelectedIndex = (flags >> 3) & 1;
       comboBoxMode.SelectedIndex = ip[12];
@@ -284,53 +274,48 @@ namespace tfm400_pc
     {
       byte[] data = new byte[UPAR_SIZE];
       UInt32 id = (UInt32)numericUpDownID.Value;
-      setUInt32(data, 0, id);
+      setUInt32LE(data, 0, id);
       UInt32 freq = (UInt32)(numericUpDownBaseFreq.Value * 1000000);
-      setUInt32(data, 4, freq);
+      setUInt32LE(data, 4, freq);
       UInt16 bw = (UInt16)numericUpDownBW.Value;
-      setUInt16(data, 8, bw);
+      setUInt16LE(data, 8, bw);
       UInt16 flags = 3;
       if (comboBoxBERtst.SelectedIndex != 0) flags |= 4;
       if (comboBoxLostPkt.SelectedIndex != 0) flags |= 8;
-      setUInt16(data, 10, flags);
+      setUInt16LE(data, 10, flags);
       data[12] = (byte)comboBoxMode.SelectedIndex;
       data[13] = (byte)comboBoxTxPwr.SelectedIndex;
       return data;
     }
 
+    private NumericUpDown[] GetFactPowerControls()
+    {
+      return new NumericUpDown[]
+      {
+        numericUpDown400H, numericUpDown410H, numericUpDown420H, numericUpDown430H,
+        numericUpDown440H, numericUpDown450H, numericUpDown460H, numericUpDown470H,
+        numericUpDown400M, numericUpDown410M, numericUpDown420M, numericUpDown430M,
+        numericUpDown440M, numericUpDown450M, numericUpDown460M, numericUpDown470M,
+        numericUpDown400L, numericUpDown410L, numericUpDown420L, numericUpDown430L,
+        numericUpDown440L, numericUpDown450L, numericUpDown460L, numericUpDown470L,
+      };
+    }
+
     private void setFactPar(byte[] ip)
     {
       int idx = 8;
-      Int32 d = (Int32)getUInt32(ip, 0);
+      Int32 d = (Int32)getUInt32LE(ip, 0);
       numericUpDownFcorr.Value = d;
-      Int16 v = (Int16)getUInt16(ip, 4);
+      Int16 v = (Int16)getUInt16LE(ip, 4);
       numericUpDownTpam.Value = v;
-      v = (Int16)getUInt16(ip, 6);
+      v = (Int16)getUInt16LE(ip, 6);
       numericUpDownTcmx.Value = v;
-      numericUpDown400H.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown410H.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown420H.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown430H.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown440H.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown450H.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown460H.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown470H.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown400M.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown410M.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown420M.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown430M.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown440M.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown450M.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown460M.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown470M.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown400L.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown410L.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown420L.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown430L.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown440L.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown450L.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown460L.Value = getUInt16(ip, idx); idx += 2;
-      numericUpDown470L.Value = getUInt16(ip, idx); idx += 2;
+
+      foreach (NumericUpDown control in GetFactPowerControls())
+      {
+        control.Value = getUInt16LE(ip, idx);
+        idx += 2;
+      }
     }
 
     private byte[] getFactPar()
@@ -338,35 +323,17 @@ namespace tfm400_pc
       int idx = 8;
       byte[] data = new byte[FPAR_SIZE];
       Int32 d = (Int32)numericUpDownFcorr.Value;
-      setUInt32(data, 0, (UInt32)d);
+      setUInt32LE(data, 0, (UInt32)d);
       Int16 v = (Int16)numericUpDownTpam.Value;
-      setUInt16(data, 4, (UInt16)v);
+      setUInt16LE(data, 4, (UInt16)v);
       v = (Int16)numericUpDownTcmx.Value;
-      setUInt16(data, 6, (UInt16)v);
-      setUInt16(data, idx, (UInt16)numericUpDown400H.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown410H.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown420H.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown430H.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown440H.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown450H.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown460H.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown470H.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown400M.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown410M.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown420M.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown430M.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown440M.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown450M.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown460M.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown470M.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown400L.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown410L.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown420L.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown430L.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown440L.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown450L.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown460L.Value); idx += 2;
-      setUInt16(data, idx, (UInt16)numericUpDown470L.Value); idx += 2;
+      setUInt16LE(data, 6, (UInt16)v);
+
+      foreach (NumericUpDown control in GetFactPowerControls())
+      {
+        setUInt16LE(data, idx, (UInt16)control.Value);
+        idx += 2;
+      }
       return data;
     }
 
@@ -375,9 +342,9 @@ namespace tfm400_pc
       byte[] data = new byte[8];
 
       Int32 d = (Int32)(numericUpDownCarrFreq.Value * 1000000);
-      setUInt32(data, 0, (UInt32)d);
+      setUInt32LE(data, 0, (UInt32)d);
       Int16 v = (Int16)numericUpDownCarrPwr.Value;
-      setUInt16(data, 4, (UInt16)v);
+      setUInt16LE(data, 4, (UInt16)v);
       data[6] = 1; // 0=level, 1=scalar
       data[7] = 0;
       return data;
@@ -438,7 +405,7 @@ namespace tfm400_pc
     private void infoSet(byte[] data, int size)
     {
       if (data == null || size < 20) return;
-      UInt16 pid = getUInt16(data, 18);
+      UInt16 pid = getUInt16LE(data, 18);
       if (pid == 0) dev_name = "TFM400BFI";
       else dev_name = "Неизвестно";
       if(this.Text == org_name)
@@ -453,7 +420,7 @@ namespace tfm400_pc
       if (size >= 18)
       {
         labelFWver.Text = data[8].ToString() + "." + data[9].ToString();
-        UInt32 fwsize = getUInt32(data, 0);
+        UInt32 fwsize = getUInt32LE(data, 0);
         labelFWsize.Text = fwsize.ToString();
       }
     }
@@ -468,23 +435,27 @@ namespace tfm400_pc
 
     private string rfStatText(int rfstat)
     {
-      if (rfstat == 0)
-        return "НЕТ АКТИВНОСТИ";
-      if (rfstat == 1)
-        return "ИНИЦИАЛИЗАЦИЯ";
-      if (rfstat == 2)
-        return "ОЖИДАНИЕ СВЯЗИ";
-      if (rfstat == 3)
-        return "СВЯЗЬ УСТАНОВЛЕНА";
-      if (rfstat == 4)
-        return "TX НЕСУЩАЯ ЧАСТОТА";
-      if (rfstat == 5)
-        return "BOOT РЕЖИМ";
-      if (rfstat == 6)
-        return "RX ИНДИКАЦИЯ RSSI";
-      if (rfstat == 7)
-        return "FDMA TX";
-      return "FDMA RX";
+      switch (rfstat)
+      {
+        case 0:
+          return "НЕТ АКТИВНОСТИ";
+        case 1:
+          return "ИНИЦИАЛИЗАЦИЯ";
+        case 2:
+          return "ОЖИДАНИЕ СВЯЗИ";
+        case 3:
+          return "СВЯЗЬ УСТАНОВЛЕНА";
+        case 4:
+          return "TX НЕСУЩАЯ ЧАСТОТА";
+        case 5:
+          return "BOOT РЕЖИМ";
+        case 6:
+          return "RX ИНДИКАЦИЯ RSSI";
+        case 7:
+          return "FDMA TX";
+        default:
+          return "FDMA RX";
+      }
     }
 
     private void UpdateRssiLogMenuState()
@@ -578,14 +549,14 @@ namespace tfm400_pc
     private void statSet(byte[] data, int size)
     {
       if (data == null || size < 14) return;
-      Int16 rssi = (Int16)getUInt16(data, 0);
+      Int16 rssi = (Int16)getUInt16LE(data, 0);
       toolStripStatusLabelRSSI.Text = "RSSI= " + rssi.ToString();
-      decimal ber = (decimal)getUInt16(data, 2) / 256;
+      decimal ber = (decimal)getUInt16LE(data, 2) / 256;
       labelDevBER.Text = ber.ToString("N1") + " %";
-      UInt16 hwec = (UInt16)getUInt16(data, 4);
+      UInt16 hwec = (UInt16)getUInt16LE(data, 4);
       labelDevErr.Text = hwec.ToString();
-      Int16 Ttx = (Int16)getUInt16(data, 6);
-      Int16 Trx = (Int16)getUInt16(data, 8);
+      Int16 Ttx = (Int16)getUInt16LE(data, 6);
+      Int16 Trx = (Int16)getUInt16LE(data, 8);
       toolStripStatusLabelTemp.Text = "Ttx= " + Ttx.ToString() + " :: Trx= " + Trx.ToString();
       int rfstat = data[13];
       string rfstatText = rfStatText(rfstat);
@@ -740,7 +711,6 @@ namespace tfm400_pc
       if (!cpo || cop != CMD_NOP) return false;
       byte[] data = getUserPar();
       bool res = cp.portSend(data, (UInt16)data.Length, CMD_UPAR_WR);
-      //bool res = cp.portSend(par1, (UInt16)UPAR_SIZE, CMD_UPAR_WR);
       if (res)
       {
         statMsgTxt = "Запись параметров в устройство... ";
@@ -858,7 +828,7 @@ namespace tfm400_pc
     {
       if (!cpo || cop != CMD_NOP) return false;
       prog_sent = Math.Min(prog_size - prog_ptr, PAGE_SIZE);
-      memcpy(page_data, 0, prog_data, prog_ptr, prog_sent);
+      CopyBytes(page_data, 0, prog_data, prog_ptr, prog_sent);
       bool res = cp.portSend(page_data, (UInt16)prog_sent, CMD_BOOT_BLK);
       if (res)
       {
@@ -868,88 +838,56 @@ namespace tfm400_pc
       return res;
     }
 
+    private PttBand[] GetPttBands()
+    {
+      return new PttBand[]
+      {
+        new PttBand(checkBox400, 405000000, numericUpDown400H, numericUpDown400M, numericUpDown400L),
+        new PttBand(checkBox410, 415000000, numericUpDown410H, numericUpDown410M, numericUpDown410L),
+        new PttBand(checkBox420, 425000000, numericUpDown420H, numericUpDown420M, numericUpDown420L),
+        new PttBand(checkBox430, 435000000, numericUpDown430H, numericUpDown430M, numericUpDown430L),
+        new PttBand(checkBox440, 445000000, numericUpDown440H, numericUpDown440M, numericUpDown440L),
+        new PttBand(checkBox450, 455000000, numericUpDown450H, numericUpDown450M, numericUpDown450L),
+        new PttBand(checkBox460, 465000000, numericUpDown460H, numericUpDown460M, numericUpDown460L),
+        new PttBand(checkBox470, 475000000, numericUpDown470H, numericUpDown470M, numericUpDown470L),
+      };
+    }
+
+    private PttBand GetSelectedPttBand()
+    {
+      foreach (PttBand band in GetPttBands())
+      {
+        if (band.CheckBox.Checked) return band;
+      }
+      return new PttBand(checkBox440, 440000000, numericUpDown440H, numericUpDown440M, numericUpDown440L);
+    }
+
+    private UInt16 GetSelectedPttPower(PttBand band)
+    {
+      int level = comboBoxPwrSel.SelectedIndex;
+      if (level == 0) return (UInt16)band.HighPower.Value;
+      if (level == 1) return (UInt16)band.MediumPower.Value;
+      return (UInt16)band.LowPower.Value;
+    }
+
     private bool comPtt(bool press)
     {
       if (!cpo || cop != CMD_NOP) return false;
       byte[] data = new byte[8];
-      Int32 freq;
-      UInt16 pwr;
+      Int32 freq = 0;
+      UInt16 pwr = 0;
+
       if (press)
       {
-        int lev = comboBoxPwrSel.SelectedIndex;
-        if (checkBox400.Checked)
-        {
-          freq = 405000000;
-          if (lev == 0) pwr = (UInt16)numericUpDown400H.Value;
-          else if (lev == 1) pwr = (UInt16)numericUpDown400M.Value;
-          else pwr = (UInt16)numericUpDown400L.Value;
-        }
-        else if (checkBox410.Checked)
-        {
-          freq = 415000000;
-          if (lev == 0) pwr = (UInt16)numericUpDown410H.Value;
-          else if (lev == 1) pwr = (UInt16)numericUpDown410M.Value;
-          else pwr = (UInt16)numericUpDown410L.Value;
-        }
-        else if (checkBox420.Checked)
-        {
-          freq = 425000000;
-          if (lev == 0) pwr = (UInt16)numericUpDown420H.Value;
-          else if (lev == 1) pwr = (UInt16)numericUpDown420M.Value;
-          else pwr = (UInt16)numericUpDown420L.Value;
-        }
-        else if (checkBox430.Checked)
-        {
-          freq = 435000000;
-          if (lev == 0) pwr = (UInt16)numericUpDown430H.Value;
-          else if (lev == 1) pwr = (UInt16)numericUpDown430M.Value;
-          else pwr = (UInt16)numericUpDown430L.Value;
-        }
-        else if (checkBox440.Checked)
-        {
-          freq = 445000000;
-          if (lev == 0) pwr = (UInt16)numericUpDown440H.Value;
-          else if (lev == 1) pwr = (UInt16)numericUpDown440M.Value;
-          else pwr = (UInt16)numericUpDown440L.Value;
-        }
-        else if (checkBox450.Checked)
-        {
-          freq = 455000000;
-          if (lev == 0) pwr = (UInt16)numericUpDown450H.Value;
-          else if (lev == 1) pwr = (UInt16)numericUpDown450M.Value;
-          else pwr = (UInt16)numericUpDown450L.Value;
-        }
-        else if (checkBox460.Checked)
-        {
-          freq = 465000000;
-          if (lev == 0) pwr = (UInt16)numericUpDown460H.Value;
-          else if (lev == 1) pwr = (UInt16)numericUpDown460M.Value;
-          else pwr = (UInt16)numericUpDown460L.Value;
-        }
-        else if (checkBox470.Checked)
-        {
-          freq = 475000000;
-          if (lev == 0) pwr = (UInt16)numericUpDown470H.Value;
-          else if (lev == 1) pwr = (UInt16)numericUpDown470M.Value;
-          else pwr = (UInt16)numericUpDown470L.Value;
-        }
-        else
-        {
-          freq = 440000000;
-          if (lev == 0) pwr = (UInt16)numericUpDown440H.Value;
-          else if (lev == 1) pwr = (UInt16)numericUpDown440M.Value;
-          else pwr = (UInt16)numericUpDown440L.Value;
-        }
+        PttBand band = GetSelectedPttBand();
+        freq = band.Frequency;
+        pwr = GetSelectedPttPower(band);
       }
-      else
-      {
-        freq = 0;
-        pwr = 0;
-      }
+
       data[6] = 1; // 0=level, 1=scalar
       data[7] = 0;
-      setUInt32(data, 0, (UInt32)freq);
-      setUInt16(data, 4, pwr);
+      setUInt32LE(data, 0, (UInt32)freq);
+      setUInt16LE(data, 4, pwr);
       bool res = cp.portSend(data, (UInt16)data.Length, CMD_PTT);
       if (res)
       {
@@ -996,238 +934,293 @@ namespace tfm400_pc
     public delegate void comRxDelegate(int type, byte[] data, int size);
     public void comRxMethod(int type, byte[] data, int size)
     {
-      if (type == CMD_UPAR_RD)
+      switch (type)
       {
-        cpTimerStop();
-        if (size == UPAR_SIZE)
-        {
-          statusMsgAppend("OK");
-          memcpy(par1, 0, data, 0, size);
-          memcpy(par2, 0, data, 0, size);
-          //init_done = false;
-          setUserPar(par1);
-          //init_done = true;
-          //isParChanged();
-        }
-        else if (size == 1)
-        {
-          int err = data[0];
-          if (err == 1)
-            statusMsgAppend("ОШИБКА (неверный формат)");
-          else
-            statusMsgAppend("ОШИБКА");
-        }
-        cop = CMD_NOP;
+        case CMD_UPAR_RD:
+          HandleUparRd(data, size);
+          break;
+        case CMD_UPAR_WR:
+          HandleUparWr(data, size);
+          break;
+        case CMD_FPAR_RD:
+          HandleFparRd(data, size);
+          break;
+        case CMD_FPAR_WR:
+          HandleFparWr(data, size);
+          break;
+        case CMD_KEYS_WR:
+          HandleKeysWr(data, size);
+          break;
+        case CMD_PTT:
+          HandlePtt(data, size);
+          break;
+        case CMD_SEND_DATA:
+          HandleSendData(data, size);
+          break;
+        case CMD_RECV_DATA:
+          HandleRecvData(data, size);
+          break;
+        case CMD_BOOT_HDR:
+          HandleBootHdr(data, size);
+          break;
+        case CMD_BOOT_BLK:
+          HandleBootBlk(data, size);
+          break;
+        case CMD_BOOT_INFO:
+          bootInfoSet(data, size);
+          break;
+        case CMD_INFO:
+          HandleInfo(data, size);
+          break;
+        case CMD_STAT:
+          HandleStat(data, size);
+          break;
       }
-      else if (type == CMD_UPAR_WR)
+    }
+
+    private bool HasPayload(byte[] data, int size, int minSize)
+    {
+      return data != null && size >= minSize;
+    }
+
+    private void HandleUparRd(byte[] data, int size)
+    {
+      cpTimerStop();
+      if (size == UPAR_SIZE)
       {
-        cpTimerStop();
-        if (size < 1 || data == null)
-        {
-          statusMsgAppend("ОШИБКА (короткий ответ)");
-          cop = CMD_NOP;
-          return;
-        }
-        int err = data[0];
-        if (err == 0)
-        {
-          statusMsgAppend("OK");
-          //parSync();
-        }
-        else if (err == 1)
-        {
-          statusMsgAppend("ОШИБКА (неверный формат)");
-        }
-        else
-        {
-          statusMsgAppend("ОШИБКА");
-        }
-        cop = CMD_NOP;
-      }
-      else if (type == CMD_FPAR_RD)
-      {
-        cpTimerStop();
         statusMsgAppend("OK");
-        if (size == FPAR_SIZE)
-        {
-          setFactPar(data);
-        }
-        cop = CMD_NOP;
+        CopyBytes(par1, 0, data, 0, size);
+        CopyBytes(par2, 0, data, 0, size);
+        setUserPar(par1);
       }
-      else if (type == CMD_FPAR_WR)
+      else if (size == 1 && data != null)
       {
-        cpTimerStop();
-        if (size < 1 || data == null)
-        {
-          statusMsgAppend("ОШИБКА (короткий ответ)");
-          cop = CMD_NOP;
-          return;
-        }
+        int err = data[0];
+        if (err == 1)
+          statusMsgAppend("ОШИБКА (неверный формат)");
+        else
+          statusMsgAppend("ОШИБКА");
+      }
+      cop = CMD_NOP;
+    }
+
+    private void HandleUparWr(byte[] data, int size)
+    {
+      cpTimerStop();
+      if (!HasPayload(data, size, 1))
+      {
+        statusMsgAppend("ОШИБКА (короткий ответ)");
+        cop = CMD_NOP;
+        return;
+      }
+
+      int err = data[0];
+      if (err == 0)
+      {
+        statusMsgAppend("OK");
+      }
+      else if (err == 1)
+      {
+        statusMsgAppend("ОШИБКА (неверный формат)");
+      }
+      else
+      {
+        statusMsgAppend("ОШИБКА");
+      }
+      cop = CMD_NOP;
+    }
+
+    private void HandleFparRd(byte[] data, int size)
+    {
+      cpTimerStop();
+      statusMsgAppend("OK");
+      if (size == FPAR_SIZE)
+      {
+        setFactPar(data);
+      }
+      cop = CMD_NOP;
+    }
+
+    private void HandleFparWr(byte[] data, int size)
+    {
+      cpTimerStop();
+      if (!HasPayload(data, size, 1))
+      {
+        statusMsgAppend("ОШИБКА (короткий ответ)");
+        cop = CMD_NOP;
+        return;
+      }
+
+      int err = data[0];
+      if (err == 0)
+      {
+        statusMsgAppend("OK");
+      }
+      else
+      {
+        statusMsgAppend("ОШИБКА");
+      }
+      cop = CMD_NOP;
+    }
+
+    private void HandleKeysWr(byte[] data, int size)
+    {
+      cpTimerStop();
+      if (HasPayload(data, size, 1))
+      {
         int err = data[0];
         if (err == 0)
         {
           statusMsgAppend("OK");
-          //parSync();
         }
         else
         {
           statusMsgAppend("ОШИБКА");
         }
-        cop = CMD_NOP;
       }
-      else if (type == CMD_KEYS_WR)
+      else
       {
-        cpTimerStop();
-        if (size > 0)
+        statusMsgAppend("ОШИБКА");
+      }
+      cop = CMD_NOP;
+    }
+
+    private void HandlePtt(byte[] data, int size)
+    {
+      cpTimerStop();
+      if (!HasPayload(data, size, 1))
+      {
+        statusMsg(statMsgTxt + "ОШИБКА (короткий ответ)", Color.Black);
+        cop = CMD_NOP;
+        return;
+      }
+
+      int err = data[0];
+      if (err == 0)
+      {
+        statusMsg(statMsgTxt + "OK", Color.Black);
+      }
+      else
+      {
+        statusMsg(statMsgTxt + "ОШИБКА", Color.Black);
+      }
+      cop = CMD_NOP;
+    }
+
+    private void HandleSendData(byte[] data, int size)
+    {
+      cpTimerStop();
+      if (!HasPayload(data, size, 1))
+      {
+        statusMsg(statMsgTxt + "ОШИБКА (короткий ответ)", Color.Black);
+        cop = CMD_NOP;
+        return;
+      }
+
+      int err = data[0];
+      if (err == 0)
+      {
+        statusMsg(statMsgTxt + "OK", Color.Black);
+        if (size >= 2 && data[1] == 0)
         {
-          int err = data[0];
-          if (err == 0)
-          {
-            statusMsgAppend("OK");
-          }
-          else
-          {
-            statusMsgAppend("ОШИБКА");
-          }
+          textBoxChat.AppendText("TX: " + sentMsg);
+          textBoxMsg.Text = "";
+        }
+      }
+      else
+      {
+        statusMsg(statMsgTxt + "ОШИБКА", Color.Black);
+      }
+      cop = CMD_NOP;
+    }
+
+    private void HandleRecvData(byte[] data, int size)
+    {
+      if (!HasPayload(data, size, 1)) return;
+      string msg = Encoding.GetEncoding(1251).GetString(data, 0, size);
+      textBoxChat.AppendText("RX: " + msg + Environment.NewLine);
+    }
+
+    private void HandleBootHdr(byte[] data, int size)
+    {
+      cpTimerStop();
+      cop = CMD_NOP;
+      if (!HasPayload(data, size, 1))
+      {
+        statusMsg("Обновление ПО... ОШИБКА (короткий ответ)", Color.Black);
+        return;
+      }
+
+      int err = data[0];
+      if (err == 0)
+      {
+        bool res = comBootBlkWr();
+        if (!res)
+        {
+          statusMsg("Обновление ПО... ОШИБКА", Color.Black);
+        }
+      }
+      else
+      {
+        statusMsg("Обновление ПО... ОШИБКА", Color.Black);
+      }
+    }
+
+    private void HandleBootBlk(byte[] data, int size)
+    {
+      cpTimerStop();
+      cop = CMD_NOP;
+      if (!HasPayload(data, size, 1))
+      {
+        statusMsg("Обновление ПО... ОШИБКА (короткий ответ)", Color.Black);
+        return;
+      }
+
+      int err = data[0];
+      if (err == 0)
+      {
+        prog_ptr += prog_sent;
+        if (prog_ptr >= prog_size)
+        {
+          statusMsg("Обновление ПО... 100%", Color.Black);
         }
         else
-        {
-          statusMsgAppend("ОШИБКА");
-        }
-        cop = CMD_NOP;
-      }
-      else if (type == CMD_PTT)
-      {
-        cpTimerStop();
-        if (size < 1 || data == null)
-        {
-          statusMsg(statMsgTxt + "ОШИБКА (короткий ответ)", Color.Black);
-          cop = CMD_NOP;
-          return;
-        }
-        int err = data[0];
-        if (err == 0)
-        {
-          statusMsg(statMsgTxt + "OK", Color.Black);
-        }
-        else
-        {
-          statusMsg(statMsgTxt + "ОШИБКА", Color.Black);
-        }
-        cop = CMD_NOP;
-      }
-      else if (type == CMD_SEND_DATA)
-      {
-        cpTimerStop();
-        if (size < 1 || data == null)
-        {
-          statusMsg(statMsgTxt + "ОШИБКА (короткий ответ)", Color.Black);
-          cop = CMD_NOP;
-          return;
-        }
-        int err = data[0];
-        if (err == 0)
-        {
-          statusMsg(statMsgTxt + "OK", Color.Black);
-          if (size >= 2 && data[1] == 0)
-          {
-            textBoxChat.AppendText("TX: " + sentMsg);
-            textBoxMsg.Text = "";
-          }
-        }
-        else
-        {
-          statusMsg(statMsgTxt + "ОШИБКА", Color.Black);
-        }
-        cop = CMD_NOP;
-      }
-      else if (type == CMD_RECV_DATA)
-      {
-        string who = "RX: ";
-        string msg = Encoding.GetEncoding(1251).GetString(data);
-        textBoxChat.AppendText(who + msg + Environment.NewLine);
-      }
-      else if (type == CMD_BOOT_HDR)
-      {
-        cpTimerStop();
-        cop = CMD_NOP;
-        if (size < 1 || data == null)
-        {
-          statusMsg("Обновление ПО... ОШИБКА (короткий ответ)", Color.Black);
-          return;
-        }
-        int err = data[0];
-        if (err == 0)
         {
           bool res = comBootBlkWr();
           if (!res)
           {
             statusMsg("Обновление ПО... ОШИБКА", Color.Black);
           }
-        }
-        else
-        {
-          statusMsg("Обновление ПО... ОШИБКА", Color.Black);
-        }
-      }
-      else if (type == CMD_BOOT_BLK)
-      {
-        cpTimerStop();
-        cop = CMD_NOP;
-        if (size < 1 || data == null)
-        {
-          statusMsg("Обновление ПО... ОШИБКА (короткий ответ)", Color.Black);
-          return;
-        }
-        int err = data[0];
-        if (err == 0)
-        {
-          prog_ptr += prog_sent;
-          if (prog_ptr >= prog_size)
-          {
-            statusMsg("Обновление ПО... 100%", Color.Black);
-          }
           else
           {
-            bool res = comBootBlkWr();
-            if (!res)
-            {
-              statusMsg("Обновление ПО... ОШИБКА", Color.Black);
-            } else
-            {
-              err = 100 * prog_ptr / prog_size;
-              statusMsg("Обновление ПО... " + err.ToString() + " %", Color.Black);
-            }
+            err = 100 * prog_ptr / prog_size;
+            statusMsg("Обновление ПО... " + err.ToString() + " %", Color.Black);
           }
         }
-        else
-        {
-          statusMsg("Обновление ПО... ОШИБКА", Color.Black);
-        }
       }
-      else if (type == CMD_BOOT_INFO)
+      else
       {
-        bootInfoSet(data, size);
-      }
-      else if (type == CMD_INFO)
-      {
-        if (size >= 20)
-        {
-          infoSet(data, size);
-          rspTimerStart(3000);
-        }
-      }
-      else if (type == CMD_STAT)
-      {
-        if (size >= 14)
-        {
-          statSet(data, size);
-          rspTimerStart(3000); // restart
-        }
+        statusMsg("Обновление ПО... ОШИБКА", Color.Black);
       }
     }
 
-    
+    private void HandleInfo(byte[] data, int size)
+    {
+      if (size >= 20)
+      {
+        infoSet(data, size);
+        rspTimerStart(3000);
+      }
+    }
+
+    private void HandleStat(byte[] data, int size)
+    {
+      if (size >= 14)
+      {
+        statSet(data, size);
+        rspTimerStart(3000);
+      }
+    }
 
     //
     // User IF
@@ -1254,28 +1247,10 @@ namespace tfm400_pc
 
     private void comboBoxTxPwr_SelectionChangeCommitted(object sender, EventArgs e)
     {
-      string s = e.ToString();
-      int i = comboBoxTxPwr.SelectedIndex;
-      s += "yes";
-    }
-
-    private void numericUpDownFreq_ValueChanged(object sender, EventArgs e)
-    {
-      string s = e.ToString();
-      s += "yes";
     }
 
     private void Form1_FormClosing(object sender, FormClosingEventArgs e)
     {
-      /*if (upar_changed)
-      {
-        DialogResult dres = MessageBox.Show("Внимание!\r\nНастройки были изменены и будут потеряны!\r\nВы уверены что хотите продолжить ?", org_name, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
-        if (dres != DialogResult.Yes)
-        {
-          e.Cancel = true;
-          return;
-        }
-      }*/
       StopRssiLog(false);
       cp.comClose();
     }
@@ -1316,10 +1291,7 @@ namespace tfm400_pc
         org_name,
         MessageBoxButtons.OK,
         MessageBoxIcon.Information,
-        MessageBoxDefaultButton.Button1,
-        0,
-        "http://google.ru",
-        "TFM400"
+        MessageBoxDefaultButton.Button1
       );
     }
 
@@ -1392,7 +1364,6 @@ namespace tfm400_pc
     private Form1 par;
 
     private const int UARTSP_RX_BUFF_SIZE = 64 * 1024;
-    private const int UARTSP_TX_BUFF_SIZE = 64 * 1024;
     private ushort CRC_INIT = 0xABCD; // 0xFFFF
 
     private Thread oThread;
@@ -1407,13 +1378,6 @@ namespace tfm400_pc
       BCSP_W4_CRC
     }; // state of RX sequence
 
-    enum proto_s
-    {
-      BCSP_SHY,
-      BCSP_CURIOUS,
-      BCSP_GARRULOUS
-    }; // state of protocol
-
     enum rx_esc_s
     {
       BCSP_ESCSTATE_NOESC,
@@ -1423,11 +1387,8 @@ namespace tfm400_pc
     private uint ofs;
     private byte rx_esc_state;
     private byte rx_state;
-    //private byte proto_state;
     private byte[] hdr;
     private byte[] crc;
-    private byte[] rx_buff;
-    private byte[] tx_buff;
     private byte[] as_buff;
     private byte[] unslip;
     private int rx_count;
@@ -1444,34 +1405,19 @@ namespace tfm400_pc
       0xc60c, 0xd68d, 0xe70e, 0xf78f};
       hdr = new byte[4];
       crc = new byte[2];
-      rx_buff = new byte[UARTSP_RX_BUFF_SIZE];
       as_buff = new byte[UARTSP_RX_BUFF_SIZE];
-      tx_buff = new byte[UARTSP_TX_BUFF_SIZE];
       startPortThread();
     }
 
-    public void putUInt16(byte[] buf, int idx, UInt16 v)
+    public void putUInt16BE(byte[] buf, int idx, UInt16 v)
     {
       buf[idx + 0] = (byte)(v >> 8);
       buf[idx + 1] = (byte)(v >> 0);
     }
-    public UInt16 getUInt16(byte[] buf, int idx)
+    public UInt16 getUInt16BE(byte[] buf, int idx)
     {
       return (UInt16)((UInt16)buf[idx + 1] | (UInt16)buf[idx] << 8);
     }
-    private bool memcmp(byte[] a, byte[] b, int size)
-    {
-      for (int i = 0; i < size; i++)
-      {
-        if (a[i] != b[i]) return true;
-      }
-      return false;
-    }
-    private void memcpy(byte[] dst, int didx, byte[] src, int sidx, int size)
-    {
-      for (int i = 0; i < size; i++) dst[didx + i] = src[sidx + i];
-    }
-
     public void startPortThread()
     {
       if (oThread != null && oThread.IsAlive) return;
@@ -1511,18 +1457,6 @@ namespace tfm400_pc
       crc = reg;
     }
 
-    private ushort crc_reverse(ushort crc)
-    {
-      ushort b, rev;
-      for (b = 0, rev = 0; b < 16; b++)
-      {
-        rev = (ushort)(rev << 1);
-        rev |= (ushort)(crc & 1);
-        crc = (ushort)(crc >> 1);
-      }
-      return (rev);
-    }
-
     private int slip_msgdelim(byte[] addr, int offset)
     {
       addr[offset] = 0xc0;
@@ -1539,7 +1473,7 @@ namespace tfm400_pc
 
       offset += slip_msgdelim(ptr, offset);
       hdr[0] = code;
-      putUInt16(hdr, 2, size);
+      putUInt16BE(hdr, 2, size);
       hdr[1] = (byte)(~(hdr[0] + hdr[2] + hdr[3]));
 
       /* Put header */
@@ -1555,10 +1489,8 @@ namespace tfm400_pc
         crc_update(ref txmsg_crc, data[i]);
       }
       /* Put CRC */
-      //txmsg_crc = crc_reverse(txmsg_crc);
       offset += slip_one_byte(ptr, (byte)(txmsg_crc >> 8), offset);
       offset += slip_one_byte(ptr, (byte)(txmsg_crc), offset);
-      //offset += slip_msgdelim(ptr, offset);
       bool res = portWriteNative(ptr, offset, out rw);
       if (rw != offset) res = false;
       return res;
@@ -1659,8 +1591,7 @@ namespace tfm400_pc
               rx_state = (byte)rx_s.BCSP_W4_PKT_DELIMITER;
               continue;
             }
-            //rx_count = (UInt16)((UInt16)hdr[2] | ((UInt16)hdr[3] << 8));
-            rx_count = (int)getUInt16(hdr, 2);
+            rx_count = (int)getUInt16BE(hdr, 2);
             if (rx_count != 0)
             {
               rx_state = (byte)rx_s.BCSP_W4_DATA;
@@ -1680,12 +1611,12 @@ namespace tfm400_pc
               continue;
             }
             int type = hdr[0];
-            int opbs = getUInt16(hdr, 2);
+            int opbs = getUInt16BE(hdr, 2);
             byte[] opb;
             if (opbs > 0)
             {
               opb = new byte[opbs];
-              par.memcpy(opb, 0, as_buff, 0, opbs);
+              par.CopyBytes(opb, 0, as_buff, 0, opbs);
             }
             else
             {
@@ -1772,11 +1703,6 @@ namespace tfm400_pc
             state = 0;
           }
         }
-        // check timeout
-        //if(tmolim && ++tmocnt > tmolim) {
-        //  par.dbg("COM time out" + Environment.NewLine);
-        //  tmolim = 0;
-        //}
         if (state == 0)
         { // wait for port up and open it
           pn = comPortEnum();
@@ -1813,8 +1739,6 @@ namespace tfm400_pc
       try
       {
         ManagementObjectCollection mbsList = null;
-        //ManagementObjectSearcher mbs = new ManagementObjectSearcher("SELECT * FROM Win32_PnPEntity WHERE Name like 'Prolific PL2303GS%'");
-        //ManagementObjectSearcher mbs = new ManagementObjectSearcher("SELECT * FROM Win32_PnPEntity WHERE Name like 'Prolific USB-to-Serial%'");
         ManagementObjectSearcher mbs = new ManagementObjectSearcher("SELECT * FROM Win32_PnPEntity WHERE Name like 'Silicon Labs CP210x%'");
         mbsList = mbs.Get();
         if (mbsList.Count == 0) return null;
@@ -1837,15 +1761,6 @@ namespace tfm400_pc
 
     #region Native comm staff
     [StructLayout(LayoutKind.Sequential)]
-    private struct Overlapped
-    {
-      public uint Internal;
-      public uint InternalHigh;
-      public uint Offset;
-      public uint OffsetHigh;
-      public SafeFileHandle hEvent;
-    }
-    [StructLayout(LayoutKind.Sequential)]
     private struct Dcb
     {
       public uint DCBlength;
@@ -1865,13 +1780,6 @@ namespace tfm400_pc
       public ushort wReserved1;
     }
     [StructLayout(LayoutKind.Sequential)]
-    private struct Comstat
-    {
-      public readonly uint Flags;
-      public readonly uint cbInQue;
-      public readonly uint cbOutQue;
-    }
-    [StructLayout(LayoutKind.Sequential)]
     private struct COMMTIMEOUTS
     {
       public int ReadIntervalTimeout;
@@ -1881,29 +1789,11 @@ namespace tfm400_pc
       public int WriteTotalTimeoutConstant;
     }
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern int WaitForSingleObject(SafeFileHandle hFile, int dwMilliseconds);
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern int WaitForMultipleObjects(int nCount, SafeFileHandle[] lpHandles, bool bWaitAll, int dwMilliseconds);
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern bool GetOverlappedResult(SafeFileHandle hFile, IntPtr lpOverlapped, out int lpNumberOfBytesTransferred, bool bWait);
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern SafeFileHandle CreateEvent(IntPtr lpEventAttributes, bool bManualReset, bool bInitialState, IntPtr lpName);
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern bool SetCommMask(SafeFileHandle hFile, int dwEvtMask);
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern bool WaitCommEvent(SafeFileHandle hFile, out int lpEvtMask, IntPtr lpOverlapped);
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern bool PurgeComm(SafeFileHandle hFile, int dwFlags);
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern bool SetupComm(SafeFileHandle hFile, int dwInQueue, int dwOutQueue);
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern bool EscapeCommFunction(SafeFileHandle hFile, int dwFunc);
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern bool GetCommState(SafeFileHandle hFile, ref Dcb lpDcb);
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern bool SetCommState(SafeFileHandle hFile, ref Dcb lpDcb);
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern bool ClearCommError(SafeFileHandle hFile, ref int lpErrors, ref Comstat lpStat);
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern SafeFileHandle CreateFile(string lpFileName, int dwDesiredAccess, int dwShareMode, IntPtr securityAttrs, int dwCreationDisposition, int dwFlagsAndAttributes, IntPtr hTemplateFile);
     [DllImport("kernel32", SetLastError = true)]
@@ -1911,31 +1801,14 @@ namespace tfm400_pc
     [DllImport("kernel32", SetLastError = true)]
     unsafe private static extern bool WriteFile(SafeFileHandle hFile, void* lpBuffer, int nBytesToWrite, out int nBytesWritten, IntPtr overlapped);
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool CloseHandle(SafeFileHandle hObject);
-    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetCommTimeouts(SafeFileHandle hFile, ref COMMTIMEOUTS lpCommTimeouts);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetCommModemStatus(SafeFileHandle hFile, ref int modemStat);
-    [DllImport("kernel32.dll")]
-    static extern int GetLastError();
 
     const int GENERIC_READ_WRITE = unchecked((int)(0xC0000000));
     const int OPEN_EXISTING = 3;
     const int MAXDWORD = unchecked((int)(0xFFFFFFFF));
     private SafeFileHandle fHandle;
-
-    private void portInitNative()
-    {
-      fHandle = null;
-    }
-
-    private bool portIsOpenNative()
-    {
-      if (fHandle == null || fHandle.IsClosed || fHandle.IsInvalid)
-        return false;
-      else
-        return true;
-    }
 
     private bool portOpenNative(string portName)
     {
@@ -1943,7 +1816,6 @@ namespace tfm400_pc
       SafeFileHandle hFile = CreateFile(portName, GENERIC_READ_WRITE, 0, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
       if (hFile.IsInvalid)
       {
-        int err = GetLastError();
         fHandle = null;
         return false;
       }
@@ -2032,14 +1904,6 @@ namespace tfm400_pc
       SetCommTimeouts(fHandle, ref tmos);
     }
 
-    private bool GetCommModemStatusNative(ref int modemStat)
-    {
-      if (fHandle == null) return false;
-      int stat = 0;
-      bool res = GetCommModemStatus(fHandle, ref stat);
-      modemStat = stat;
-      return res;
-    }
     #endregion
   }
 }
